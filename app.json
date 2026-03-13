@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "Filament Inventory",
+    "slug": "filament-inventory",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.kevin.filamentinventory",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      "expo-sqlite",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Filament Inventory to access your camera to scan barcodes."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "f4ce09ef-4dd0-431b-a2ce-e993f23bc1d1"
+      }
+    }
+  }
+}
