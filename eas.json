@@ -6,11 +6,19 @@
     "preview": {
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "your_prod_supabase_url",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "your_prod_supabase_anon_key"
       }
     },
     "production": {
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "your_prod_supabase_url",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "your_prod_supabase_anon_key"
       }
     }
   }
