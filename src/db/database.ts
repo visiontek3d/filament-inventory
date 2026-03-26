@@ -1,5 +1,9 @@
 import * as SQLite from 'expo-sqlite';
 import { Filament, FilamentSummary, Roll } from '../types';
+import {
+  syncCreateFilament, syncUpdateFilament, syncDeleteFilament,
+  syncCreateRoll, syncUpdateRoll, syncDeleteRoll, syncSetting,
+} from './sync';
 
 const db = SQLite.openDatabaseSync('filament.db');
 
@@ -38,6 +42,8 @@ db.execSync(`
 try { db.execSync('ALTER TABLE filaments ADD COLUMN url TEXT'); } catch (_) {}
 try { db.execSync("ALTER TABLE filaments ADD COLUMN priority TEXT NOT NULL DEFAULT 'Medium'"); } catch (_) {}
 try { db.execSync('ALTER TABLE rolls ADD COLUMN archived INTEGER NOT NULL DEFAULT 0'); } catch (_) {}
+try { db.execSync('ALTER TABLE filaments ADD COLUMN supabase_id TEXT'); } catch (_) {}
+try { db.execSync('ALTER TABLE rolls ADD COLUMN supabase_id TEXT'); } catch (_) {}
 try {
   db.execSync(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
   db.execSync(`
@@ -123,7 +129,9 @@ export function createFilament(
     'INSERT INTO filaments (manufacturer, type, color, upc, photo_uri, url, priority) VALUES (?, ?, ?, ?, ?, ?, ?)',
     [manufacturer, type, color, upc, photo_uri, url, priority]
   );
-  return result.lastInsertRowId;
+  const localId = result.lastInsertRowId;
+  syncCreateFilament(localId, { manufacturer, type, color, upc, url, priority }).catch(() => {});
+  return localId;
 }
 
 export function updateFilament(
@@ -140,6 +148,10 @@ export function updateFilament(
     'UPDATE filaments SET manufacturer = ?, type = ?, color = ?, upc = ?, photo_uri = ?, url = ?, priority = ? WHERE id = ?',
     [manufacturer, type, color, upc, photo_uri, url, priority, id]
   );
+  const row = db.getFirstSync<{ supabase_id: string | null }>('SELECT supabase_id FROM filaments WHERE id = ?', [id]);
+  if (row?.supabase_id) {
+    syncUpdateFilament(row.supabase_id, { manufacturer, type, color, upc, url, priority }).catch(() => {});
+  }
 }
 
 export function updateFilamentPhoto(id: number, photo_uri: string): void {
@@ -147,7 +159,9 @@ export function updateFilamentPhoto(id: number, photo_uri: string): void {
 }
 
 export function deleteFilament(id: number): void {
+  const row = db.getFirstSync<{ supabase_id: string | null }>('SELECT supabase_id FROM filaments WHERE id = ?', [id]);
   db.runSync('DELETE FROM filaments WHERE id = ?', [id]);
+  if (row?.supabase_id) syncDeleteFilament(row.supabase_id).catch(() => {});
 }
 
 export type BulkImportResult = { inserted: number; skipped: number; errors: string[] };
@@ -187,26 +201,35 @@ export function getRolls(filamentId: number): Roll[] {
 }
 
 export function createRoll(filamentId: number): void {
-  db.runSync(
+  const result = db.runSync(
     "INSERT INTO rolls (filament_id, location, is_checked_out) VALUES (?, '', 0)",
     [filamentId]
   );
+  syncCreateRoll(result.lastInsertRowId, filamentId).catch(() => {});
 }
 
 export function setRollInUse(id: number): void {
   db.runSync('UPDATE rolls SET is_checked_out = 1 WHERE id = ?', [id]);
+  const row = db.getFirstSync<{ supabase_id: string | null }>('SELECT supabase_id FROM rolls WHERE id = ?', [id]);
+  if (row?.supabase_id) syncUpdateRoll(row.supabase_id, { is_checked_out: 1 }).catch(() => {});
 }
 
 export function setRollInInventory(id: number): void {
   db.runSync('UPDATE rolls SET is_checked_out = 0 WHERE id = ?', [id]);
+  const row = db.getFirstSync<{ supabase_id: string | null }>('SELECT supabase_id FROM rolls WHERE id = ?', [id]);
+  if (row?.supabase_id) syncUpdateRoll(row.supabase_id, { is_checked_out: 0 }).catch(() => {});
 }
 
 export function archiveRoll(id: number): void {
   db.runSync('UPDATE rolls SET archived = 1 WHERE id = ?', [id]);
+  const row = db.getFirstSync<{ supabase_id: string | null }>('SELECT supabase_id FROM rolls WHERE id = ?', [id]);
+  if (row?.supabase_id) syncUpdateRoll(row.supabase_id, { archived: 1, is_checked_out: 0 }).catch(() => {});
 }
 
 export function deleteRoll(id: number): void {
+  const row = db.getFirstSync<{ supabase_id: string | null }>('SELECT supabase_id FROM rolls WHERE id = ?', [id]);
   db.runSync('DELETE FROM rolls WHERE id = ?', [id]);
+  if (row?.supabase_id) syncDeleteRoll(row.supabase_id).catch(() => {});
 }
 
 
@@ -243,4 +266,5 @@ export function getSetting(key: string, defaultValue: string): string {
 
 export function setSetting(key: string, value: string): void {
   db.runSync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, value]);
+  syncSetting(key, value).catch(() => {});
 }
