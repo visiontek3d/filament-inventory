@@ -100,12 +100,9 @@ function mapRoll(r: any): Roll {
 // ── Filaments ──────────────────────────────────────────────────────────────────
 
 export async function getAllFilaments(): Promise<FilamentSummary[]> {
-  const userId = await getCurrentUserId();
-  if (!userId) return [];
   const { data } = await supabase
     .from('filaments')
     .select('*, rolls(*)')
-    .eq('user_id', userId)
     .order('manufacturer', { ascending: true });
   if (!data) return [];
   return data
@@ -139,12 +136,9 @@ export async function getFilament(id: string): Promise<Filament | null> {
 }
 
 export async function getFilamentByUpc(upc: string): Promise<FilamentSummary | null> {
-  const userId = await getCurrentUserId();
-  if (!userId) return null;
   const { data } = await supabase
     .from('filaments')
     .select('*, rolls(*)')
-    .eq('user_id', userId)
     .eq('upc', upc)
     .maybeSingle();
   if (!data) return null;
@@ -152,23 +146,13 @@ export async function getFilamentByUpc(upc: string): Promise<FilamentSummary | n
 }
 
 export async function getDistinctManufacturers(): Promise<string[]> {
-  const userId = await getCurrentUserId();
-  if (!userId) return [];
-  const { data } = await supabase
-    .from('filaments')
-    .select('manufacturer')
-    .eq('user_id', userId);
+  const { data } = await supabase.from('filaments').select('manufacturer');
   if (!data) return [];
   return [...new Set(data.map((r: any) => r.manufacturer as string))].sort();
 }
 
 export async function getDistinctTypes(): Promise<string[]> {
-  const userId = await getCurrentUserId();
-  if (!userId) return [];
-  const { data } = await supabase
-    .from('filaments')
-    .select('type')
-    .eq('user_id', userId);
+  const { data } = await supabase.from('filaments').select('type');
   if (!data) return [];
   return [...new Set(data.map((r: any) => r.type as string))].sort();
 }
@@ -258,7 +242,6 @@ export async function bulkImportFilaments(
         const { data: existing } = await supabase
           .from('filaments')
           .select('id')
-          .eq('user_id', userId)
           .eq('upc', row.upc)
           .maybeSingle();
         if (existing) { result.skipped++; continue; }
@@ -340,8 +323,6 @@ export async function setSetting(key: string, value: string): Promise<void> {
 }
 
 export async function clearAllData(): Promise<void> {
-  const userId = await getCurrentUserId();
-  if (!userId) return;
-  await supabase.from('filaments').delete().eq('user_id', userId);
+  await supabase.from('filaments').delete().neq('id', 0);
   db.execSync('DELETE FROM local_photos');
 }
