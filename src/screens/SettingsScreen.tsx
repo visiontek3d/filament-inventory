@@ -10,6 +10,7 @@ import {
   getSetting,
   setSetting,
   setLocalPhotoUri,
+  uploadFilamentPhoto,
 } from '../db/supabase-operations';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
@@ -83,7 +84,16 @@ export default function SettingsScreen({ navigation }: Props) {
         const ext = asset.name.split('.').pop() ?? 'jpg';
         const dest = `${FileSystem.documentDirectory}filament_${filament.id}.${ext}`;
         await FileSystem.copyAsync({ from: asset.uri, to: dest });
-        setLocalPhotoUri(filament.id, dest);
+        // Upload to Supabase Storage; fall back to local URI if it fails
+        try {
+          const photoUrl = await uploadFilamentPhoto(dest, filament.id);
+          await (await import('../lib/supabase')).supabase
+            .from('filaments')
+            .update({ photo_url: photoUrl })
+            .eq('id', filament.id);
+        } catch (_) {
+          setLocalPhotoUri(filament.id, dest);
+        }
         matched++;
       } catch (e: any) {
         errors.push(`${asset.name}: ${e.message}`);

@@ -1,8 +1,12 @@
 import { supabase, getCurrentUserId } from '../lib/supabase';
 import * as SQLite from 'expo-sqlite';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { Filament, FilamentSummary, Roll } from '../types';
 
-// SQLite solely for local photo URI storage (photos stay on device)
+const PHOTO_BUCKET = 'filament-photos';
+
+// SQLite for local photo cache (fallback for pre-migration photos without a cloud URL)
 const db = SQLite.openDatabaseSync('filament.db');
 try {
   db.execSync(`
@@ -31,6 +35,36 @@ function deleteLocalPhotoUri(filamentId: string): void {
   db.runSync('DELETE FROM local_photos WHERE filament_id = ?', [filamentId]);
 }
 
+/**
+ * Upload a local photo URI to Supabase Storage.
+ * If the URI is already an HTTPS URL, returns it unchanged.
+ * Compresses to max 1200px JPEG before uploading.
+ */
+export async function uploadFilamentPhoto(localUri: string, filamentId: string): Promise<string> {
+  if (localUri.startsWith('https://')) return localUri;
+
+  const compressed = await ImageManipulator.manipulateAsync(
+    localUri,
+    [{ resize: { width: 1200 } }],
+    { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
+  );
+
+  const fileName = `filament_${filamentId}_${Date.now()}.jpg`;
+  const base64 = await FileSystem.readAsStringAsync(compressed.uri, { encoding: 'base64' as any });
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+
+  const { error } = await supabase.storage
+    .from(PHOTO_BUCKET)
+    .upload(fileName, bytes, { contentType: 'image/jpeg', upsert: true });
+  if (error) throw error;
+
+  return supabase.storage.from(PHOTO_BUCKET).getPublicUrl(fileName).data.publicUrl;
+}
+
 // ── Row mappers ────────────────────────────────────────────────────────────────
 
 function mapFilamentSummary(row: any): FilamentSummary {
@@ -43,7 +77,7 @@ function mapFilamentSummary(row: any): FilamentSummary {
     type: row.type,
     color: row.color,
     upc: row.upc ?? '',
-    photo_uri: getLocalPhotoUri(id),
+    photo_uri: row.photo_url ?? getLocalPhotoUri(id),
     url: row.url ?? null,
     priority: row.priority ?? 'None',
     created_at: row.created_at,
@@ -97,7 +131,7 @@ export async function getFilament(id: string): Promise<Filament | null> {
     type: data.type,
     color: data.color,
     upc: data.upc ?? '',
-    photo_uri: getLocalPhotoUri(sid),
+    photo_uri: data.photo_url ?? getLocalPhotoUri(sid),
     url: data.url ?? null,
     priority: data.priority ?? 'None',
     created_at: data.created_at,
@@ -150,6 +184,7 @@ export async function createFilament(
 ): Promise<string | null> {
   const userId = await getCurrentUserId();
   if (!userId) return null;
+  // Insert first to get the ID, then upload photo with that ID in the filename
   const { data } = await supabase
     .from('filaments')
     .insert({ user_id: userId, manufacturer, type, color, upc, url, priority, photo_url: null })
@@ -157,7 +192,16 @@ export async function createFilament(
     .single();
   if (!data) return null;
   const sid = String(data.id);
-  if (photo_uri) setLocalPhotoUri(sid, photo_uri);
+
+  if (photo_uri) {
+    try {
+      const photoUrl = await uploadFilamentPhoto(photo_uri, sid);
+      await supabase.from('filaments').update({ photo_url: photoUrl }).eq('id', sid);
+    } catch (_) {
+      // Photo upload failed — keep local fallback
+      setLocalPhotoUri(sid, photo_uri);
+    }
+  }
   return sid;
 }
 
@@ -171,15 +215,27 @@ export async function updateFilament(
   url: string | null,
   priority: string
 ): Promise<void> {
+  let newPhotoUrl: string | null | undefined = undefined; // undefined = don't change
+  deleteLocalPhotoUri(id);
+
+  if (photo_uri === null) {
+    newPhotoUrl = null; // explicitly clear the photo
+  } else {
+    try {
+      newPhotoUrl = await uploadFilamentPhoto(photo_uri, id);
+    } catch (_) {
+      // Upload failed — keep existing photo_url in Supabase, store local fallback
+      setLocalPhotoUri(id, photo_uri);
+    }
+  }
+
   await supabase
     .from('filaments')
-    .update({ manufacturer, type, color, upc, url, priority })
+    .update({
+      manufacturer, type, color, upc, url, priority,
+      ...(newPhotoUrl !== undefined && { photo_url: newPhotoUrl }),
+    })
     .eq('id', id);
-  if (photo_uri) {
-    setLocalPhotoUri(id, photo_uri);
-  } else {
-    deleteLocalPhotoUri(id);
-  }
 }
 
 export async function deleteFilament(id: string): Promise<void> {

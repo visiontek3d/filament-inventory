@@ -1,4 +1,6 @@
 import { supabase } from '../lib/supabase';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as ImageManipulator from 'expo-image-manipulator';
 import {
   getSetting,
   setSetting,
@@ -9,6 +11,30 @@ import {
   setMigrationRollSupabaseId,
   setMigrationLocalPhoto,
 } from '../db/database';
+
+const PHOTO_BUCKET = 'filament-photos';
+
+async function uploadLocalPhoto(localUri: string, filamentId: string): Promise<string | null> {
+  try {
+    const compressed = await ImageManipulator.manipulateAsync(
+      localUri,
+      [{ resize: { width: 1200 } }],
+      { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
+    );
+    const fileName = `filament_${filamentId}_${Date.now()}.jpg`;
+    const base64 = await FileSystem.readAsStringAsync(compressed.uri, { encoding: 'base64' as any });
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+    const { error } = await supabase.storage
+      .from(PHOTO_BUCKET)
+      .upload(fileName, bytes, { contentType: 'image/jpeg', upsert: true });
+    if (error) return null;
+    return supabase.storage.from(PHOTO_BUCKET).getPublicUrl(fileName).data.publicUrl;
+  } catch {
+    return null;
+  }
+}
 
 export async function migrateToSupabase(
   userId: string,
@@ -29,6 +55,16 @@ export async function migrateToSupabase(
 
     onProgress(`Migrating filaments… (${filamentsDone + 1}/${filaments.length})`);
 
+    // Upload photo to Supabase Storage if available
+    let photo_url: string | null = null;
+    if (f.photo_uri) {
+      onProgress(`Uploading photo… (${filamentsDone + 1}/${filaments.length})`);
+      photo_url = await uploadLocalPhoto(f.photo_uri, String(filamentsDone));
+      if (!photo_url && f.photo_uri) {
+        // Upload failed — will be stored as local fallback after we get the Supabase ID
+      }
+    }
+
     const { data, error } = await supabase
       .from('filaments')
       .insert({
@@ -39,7 +75,7 @@ export async function migrateToSupabase(
         upc: f.upc,
         url: f.url,
         priority: f.priority,
-        photo_url: null,
+        photo_url,
       })
       .select('id')
       .single();
@@ -47,8 +83,8 @@ export async function migrateToSupabase(
     if (!error && data) {
       setMigrationFilamentSupabaseId(f.id, String(data.id));
       f.supabase_id = String(data.id);
-      // Preserve local photo URI mapped to Supabase ID
-      if (f.photo_uri) {
+      // If photo upload failed, store local URI as fallback
+      if (f.photo_uri && !photo_url) {
         setMigrationLocalPhoto(String(data.id), f.photo_uri);
       }
     }
