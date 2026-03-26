@@ -1,9 +1,4 @@
 import * as SQLite from 'expo-sqlite';
-import { Filament, FilamentSummary, Roll } from '../types';
-import {
-  syncCreateFilament, syncUpdateFilament, syncDeleteFilament,
-  syncCreateRoll, syncUpdateRoll, syncDeleteRoll, syncSetting,
-} from './sync';
 
 const db = SQLite.openDatabaseSync('filament.db');
 
@@ -53,211 +48,16 @@ try {
       ('threshold_High', '4')
   `);
 } catch (_) {}
-
-// ── Filaments ──────────────────────────────────────────────────────────────────
-
-export function getAllFilaments(): FilamentSummary[] {
-  return db.getAllSync<FilamentSummary>(`
-    SELECT
-      f.*,
-      COUNT(r.id) AS total_rolls,
-      SUM(CASE WHEN r.is_checked_out = 0 AND r.archived = 0 THEN 1 ELSE 0 END) AS in_inventory,
-      SUM(CASE WHEN r.is_checked_out = 1 AND r.archived = 0 THEN 1 ELSE 0 END) AS in_use
-    FROM filaments f
-    LEFT JOIN rolls r ON r.filament_id = f.id
-    GROUP BY f.id
-    ORDER BY f.manufacturer ASC, f.type ASC, f.color ASC
+try {
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS local_photos (
+      filament_id TEXT PRIMARY KEY,
+      photo_uri TEXT NOT NULL
+    )
   `);
-}
+} catch (_) {}
 
-export function getDistinctManufacturers(): string[] {
-  return db.getAllSync<{ manufacturer: string }>(
-    'SELECT DISTINCT manufacturer FROM filaments ORDER BY manufacturer ASC'
-  ).map(r => r.manufacturer);
-}
-
-export function getDistinctTypes(): string[] {
-  return db.getAllSync<{ type: string }>(
-    'SELECT DISTINCT type FROM filaments ORDER BY type ASC'
-  ).map(r => r.type);
-}
-
-export function getFilament(id: number): Filament | null {
-  return db.getFirstSync<Filament>('SELECT * FROM filaments WHERE id = ?', [id]) ?? null;
-}
-
-export function getFilamentByUpc(upc: string): FilamentSummary | null {
-  return db.getFirstSync<FilamentSummary>(`
-    SELECT
-      f.*,
-      COUNT(r.id) AS total_rolls,
-      SUM(CASE WHEN r.is_checked_out = 0 AND r.archived = 0 THEN 1 ELSE 0 END) AS in_inventory,
-      SUM(CASE WHEN r.is_checked_out = 1 AND r.archived = 0 THEN 1 ELSE 0 END) AS in_use
-    FROM filaments f
-    LEFT JOIN rolls r ON r.filament_id = f.id
-    WHERE f.upc = ?
-    GROUP BY f.id
-  `, [upc]) ?? null;
-}
-
-export function searchFilaments(query: string): FilamentSummary[] {
-  const like = `%${query}%`;
-  return db.getAllSync<FilamentSummary>(`
-    SELECT
-      f.*,
-      COUNT(r.id) AS total_rolls,
-      SUM(CASE WHEN r.is_checked_out = 0 AND r.archived = 0 THEN 1 ELSE 0 END) AS in_inventory,
-      SUM(CASE WHEN r.is_checked_out = 1 AND r.archived = 0 THEN 1 ELSE 0 END) AS in_use
-    FROM filaments f
-    LEFT JOIN rolls r ON r.filament_id = f.id
-    WHERE f.manufacturer LIKE ? OR f.type LIKE ? OR f.color LIKE ? OR f.upc LIKE ?
-    GROUP BY f.id
-    ORDER BY f.manufacturer ASC, f.type ASC, f.color ASC
-  `, [like, like, like, like]);
-}
-
-export function createFilament(
-  manufacturer: string,
-  type: string,
-  color: string,
-  upc: string,
-  photo_uri: string | null,
-  url: string | null,
-  priority: string
-): number {
-  const result = db.runSync(
-    'INSERT INTO filaments (manufacturer, type, color, upc, photo_uri, url, priority) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [manufacturer, type, color, upc, photo_uri, url, priority]
-  );
-  const localId = result.lastInsertRowId;
-  syncCreateFilament(localId, { manufacturer, type, color, upc, url, priority }).catch(() => {});
-  return localId;
-}
-
-export function updateFilament(
-  id: number,
-  manufacturer: string,
-  type: string,
-  color: string,
-  upc: string,
-  photo_uri: string | null,
-  url: string | null,
-  priority: string
-): void {
-  db.runSync(
-    'UPDATE filaments SET manufacturer = ?, type = ?, color = ?, upc = ?, photo_uri = ?, url = ?, priority = ? WHERE id = ?',
-    [manufacturer, type, color, upc, photo_uri, url, priority, id]
-  );
-  const row = db.getFirstSync<{ supabase_id: string | null }>('SELECT supabase_id FROM filaments WHERE id = ?', [id]);
-  if (row?.supabase_id) {
-    syncUpdateFilament(row.supabase_id, { manufacturer, type, color, upc, url, priority }).catch(() => {});
-  }
-}
-
-export function updateFilamentPhoto(id: number, photo_uri: string): void {
-  db.runSync('UPDATE filaments SET photo_uri = ? WHERE id = ?', [photo_uri, id]);
-}
-
-export function deleteFilament(id: number): void {
-  const row = db.getFirstSync<{ supabase_id: string | null }>('SELECT supabase_id FROM filaments WHERE id = ?', [id]);
-  db.runSync('DELETE FROM filaments WHERE id = ?', [id]);
-  if (row?.supabase_id) syncDeleteFilament(row.supabase_id).catch(() => {});
-}
-
-export type BulkImportResult = { inserted: number; skipped: number; errors: string[] };
-
-export function bulkImportFilaments(
-  rows: { manufacturer: string; type: string; color: string; upc: string; url: string | null }[]
-): BulkImportResult {
-  const result: BulkImportResult = { inserted: 0, skipped: 0, errors: [] };
-  for (const row of rows) {
-    try {
-      const existing = row.upc
-        ? db.getFirstSync('SELECT id FROM filaments WHERE upc = ?', [row.upc])
-        : null;
-      if (existing) {
-        result.skipped++;
-        continue;
-      }
-      db.runSync(
-        'INSERT INTO filaments (manufacturer, type, color, upc, url) VALUES (?, ?, ?, ?, ?)',
-        [row.manufacturer, row.type, row.color, row.upc, row.url]
-      );
-      result.inserted++;
-    } catch (e: any) {
-      result.errors.push(`${row.manufacturer} ${row.type} ${row.color}: ${e.message}`);
-    }
-  }
-  return result;
-}
-
-// ── Rolls ──────────────────────────────────────────────────────────────────────
-
-export function getRolls(filamentId: number): Roll[] {
-  return db.getAllSync<Roll>(
-    'SELECT id, filament_id, is_checked_out AS is_in_use, archived, created_at FROM rolls WHERE filament_id = ? ORDER BY archived ASC, is_checked_out DESC, created_at ASC',
-    [filamentId]
-  );
-}
-
-export function createRoll(filamentId: number): void {
-  const result = db.runSync(
-    "INSERT INTO rolls (filament_id, location, is_checked_out) VALUES (?, '', 0)",
-    [filamentId]
-  );
-  syncCreateRoll(result.lastInsertRowId, filamentId).catch(() => {});
-}
-
-export function setRollInUse(id: number): void {
-  db.runSync('UPDATE rolls SET is_checked_out = 1 WHERE id = ?', [id]);
-  const row = db.getFirstSync<{ supabase_id: string | null }>('SELECT supabase_id FROM rolls WHERE id = ?', [id]);
-  if (row?.supabase_id) syncUpdateRoll(row.supabase_id, { is_checked_out: 1 }).catch(() => {});
-}
-
-export function setRollInInventory(id: number): void {
-  db.runSync('UPDATE rolls SET is_checked_out = 0 WHERE id = ?', [id]);
-  const row = db.getFirstSync<{ supabase_id: string | null }>('SELECT supabase_id FROM rolls WHERE id = ?', [id]);
-  if (row?.supabase_id) syncUpdateRoll(row.supabase_id, { is_checked_out: 0 }).catch(() => {});
-}
-
-export function archiveRoll(id: number): void {
-  db.runSync('UPDATE rolls SET archived = 1 WHERE id = ?', [id]);
-  const row = db.getFirstSync<{ supabase_id: string | null }>('SELECT supabase_id FROM rolls WHERE id = ?', [id]);
-  if (row?.supabase_id) syncUpdateRoll(row.supabase_id, { archived: 1, is_checked_out: 0 }).catch(() => {});
-}
-
-export function deleteRoll(id: number): void {
-  const row = db.getFirstSync<{ supabase_id: string | null }>('SELECT supabase_id FROM rolls WHERE id = ?', [id]);
-  db.runSync('DELETE FROM rolls WHERE id = ?', [id]);
-  if (row?.supabase_id) syncDeleteRoll(row.supabase_id).catch(() => {});
-}
-
-
-// ── List Items (manufacturers, types, locations) ───────────────────────────────
-
-export type ListCategory = 'manufacturer' | 'type' | 'location';
-
-export function getListItems(category: ListCategory): string[] {
-  return db.getAllSync<{ value: string }>(
-    'SELECT value FROM list_items WHERE category = ? ORDER BY value ASC', [category]
-  ).map(r => r.value);
-}
-
-export function addListItem(category: ListCategory, value: string): void {
-  db.runSync(
-    'INSERT OR IGNORE INTO list_items (category, value) VALUES (?, ?)', [category, value.trim()]
-  );
-}
-
-export function deleteListItem(category: ListCategory, value: string): void {
-  db.runSync('DELETE FROM list_items WHERE category = ? AND value = ?', [category, value]);
-}
-
-export function clearAllData(): void {
-  db.execSync('DELETE FROM rolls; DELETE FROM filaments;');
-}
-
-// ── Settings ───────────────────────────────────────────────────────────────────
+// ── Local settings (used for migration flag only) ──────────────────────────────
 
 export function getSetting(key: string, defaultValue: string): string {
   const row = db.getFirstSync<{ value: string }>('SELECT value FROM settings WHERE key = ?', [key]);
@@ -266,5 +66,46 @@ export function getSetting(key: string, defaultValue: string): string {
 
 export function setSetting(key: string, value: string): void {
   db.runSync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, value]);
-  syncSetting(key, value).catch(() => {});
+}
+
+// ── Migration read helpers (used by migrateToSupabase.ts) ─────────────────────
+
+export function getMigrationFilaments(): {
+  id: number; manufacturer: string; type: string; color: string;
+  upc: string; url: string | null; priority: string;
+  photo_uri: string | null; supabase_id: string | null;
+}[] {
+  return db.getAllSync(
+    'SELECT id, manufacturer, type, color, upc, url, priority, photo_uri, supabase_id FROM filaments'
+  );
+}
+
+export function getMigrationRolls(): {
+  id: number; filament_id: number;
+  is_checked_out: number; archived: number;
+  supabase_id: string | null;
+}[] {
+  return db.getAllSync(
+    'SELECT id, filament_id, is_checked_out, archived, supabase_id FROM rolls'
+  );
+}
+
+export function getMigrationSettings(): { key: string; value: string }[] {
+  return db.getAllSync('SELECT key, value FROM settings');
+}
+
+export function setMigrationFilamentSupabaseId(localId: number, supabaseId: string): void {
+  db.runSync('UPDATE filaments SET supabase_id = ? WHERE id = ?', [supabaseId, localId]);
+}
+
+export function setMigrationRollSupabaseId(localId: number, supabaseId: string): void {
+  db.runSync('UPDATE rolls SET supabase_id = ? WHERE id = ?', [supabaseId, localId]);
+}
+
+// Store local photo URI for a migrated filament (keyed by Supabase UUID)
+export function setMigrationLocalPhoto(supabaseId: string, photoUri: string): void {
+  db.runSync(
+    'INSERT OR REPLACE INTO local_photos (filament_id, photo_uri) VALUES (?, ?)',
+    [supabaseId, photoUri]
+  );
 }

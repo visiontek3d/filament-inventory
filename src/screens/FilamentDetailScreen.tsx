@@ -18,7 +18,7 @@ import {
   getFilament,
   getRolls,
   setRollInUse,
-} from '../db/database';
+} from '../db/supabase-operations';
 import { Filament, Roll, RootStackParamList } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'FilamentDetail'>;
@@ -30,12 +30,18 @@ export default function FilamentDetailScreen({ route, navigation }: Props) {
   const [showArchived, setShowArchived] = useState(false);
 
   const load = useCallback(() => {
-    const f = getFilament(filamentId);
-    setFilament(f);
-    if (f) {
-      navigation.setOptions({ title: `${f.manufacturer} ${f.type}` });
-      setRolls(getRolls(filamentId));
-    }
+    let cancelled = false;
+    (async () => {
+      const f = await getFilament(filamentId);
+      if (cancelled) return;
+      setFilament(f);
+      if (f) {
+        navigation.setOptions({ title: `${f.manufacturer} ${f.type}` });
+        const r = await getRolls(filamentId);
+        if (!cancelled) setRolls(r);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [filamentId, navigation]);
 
   useFocusEffect(load);
@@ -59,17 +65,19 @@ export default function FilamentDetailScreen({ route, navigation }: Props) {
       {
         text: 'Mark Empty',
         style: 'destructive',
-        onPress: () => {
-          archiveRoll(roll.id);
-          setRolls(getRolls(filamentId));
+        onPress: async () => {
+          await archiveRoll(roll.id);
+          const updated = await getRolls(filamentId);
+          setRolls(updated);
         },
       },
     ]);
   };
 
-  const handleMoveToInUse = (roll: Roll) => {
-    setRollInUse(roll.id);
-    setRolls(getRolls(filamentId));
+  const handleMoveToInUse = async (roll: Roll) => {
+    await setRollInUse(roll.id);
+    const updated = await getRolls(filamentId);
+    setRolls(updated);
   };
 
   const handleDeleteFilament = () => {
@@ -81,8 +89,8 @@ export default function FilamentDetailScreen({ route, navigation }: Props) {
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => {
-            deleteFilament(filamentId);
+          onPress: async () => {
+            await deleteFilament(filamentId);
             navigation.goBack();
           },
         },
@@ -96,9 +104,10 @@ export default function FilamentDetailScreen({ route, navigation }: Props) {
       {
         text: 'Delete',
         style: 'destructive',
-        onPress: () => {
-          deleteRoll(roll.id);
-          setRolls(getRolls(filamentId));
+        onPress: async () => {
+          await deleteRoll(roll.id);
+          const updated = await getRolls(filamentId);
+          setRolls(updated);
         },
       },
     ]);
@@ -161,7 +170,6 @@ export default function FilamentDetailScreen({ route, navigation }: Props) {
         <Text style={styles.noRolls}>No rolls tracked yet. Tap + Add Rolls to start.</Text>
       ) : null}
 
-      {/* In Use rolls */}
       {inUse.map((roll) => (
         <View key={roll.id} style={[styles.rollCard, styles.rollCardInUse]}>
           <View style={styles.rollInfo}>
@@ -179,7 +187,6 @@ export default function FilamentDetailScreen({ route, navigation }: Props) {
         </View>
       ))}
 
-      {/* Inventory rolls */}
       {inInventory.map((roll) => (
         <View key={roll.id} style={[styles.rollCard, styles.rollCardInventory]}>
           <View style={styles.rollInfo}>
@@ -197,7 +204,6 @@ export default function FilamentDetailScreen({ route, navigation }: Props) {
         </View>
       ))}
 
-      {/* Empty spool archive */}
       {archivedRolls.length > 0 && (
         <>
           <Pressable style={styles.archiveToggle} onPress={() => setShowArchived(v => !v)}>

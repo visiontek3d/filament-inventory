@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
@@ -9,7 +10,7 @@ import {
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { bulkImportFilaments } from '../db/database';
+import { bulkImportFilaments } from '../db/supabase-operations';
 import { RootStackParamList } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'BulkImport'>;
@@ -26,6 +27,7 @@ type PreviewRow = {
 export default function BulkImportScreen({ navigation }: Props) {
   const [preview, setPreview] = useState<PreviewRow[]>([]);
   const [fileName, setFileName] = useState('');
+  const [importing, setImporting] = useState(false);
 
   const handlePick = async () => {
     try {
@@ -78,8 +80,10 @@ export default function BulkImportScreen({ navigation }: Props) {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Import',
-          onPress: () => {
-            const result = bulkImportFilaments(validRows);
+          onPress: async () => {
+            setImporting(true);
+            const result = await bulkImportFilaments(validRows);
+            setImporting(false);
             Alert.alert(
               'Import Complete',
               `Added: ${result.inserted}\nSkipped (UPC already exists): ${result.skipped}${result.errors.length ? `\nErrors: ${result.errors.join(', ')}` : ''}`,
@@ -135,13 +139,14 @@ export default function BulkImportScreen({ navigation }: Props) {
           ))}
 
           <Pressable
-            style={[styles.importBtn, validCount === 0 && styles.importBtnDisabled]}
+            style={[styles.importBtn, (validCount === 0 || importing) && styles.importBtnDisabled]}
             onPress={handleImport}
-            disabled={validCount === 0}
+            disabled={validCount === 0 || importing}
           >
-            <Text style={styles.importBtnText}>
-              Import {validCount} Filament{validCount !== 1 ? 's' : ''}
-            </Text>
+            {importing
+              ? <ActivityIndicator color="#fff" />
+              : <Text style={styles.importBtnText}>Import {validCount} Filament{validCount !== 1 ? 's' : ''}</Text>
+            }
           </Pressable>
         </>
       )}
@@ -153,7 +158,7 @@ function parseCSV(content: string): PreviewRow[] {
   const lines = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim().split('\n');
   if (lines.length < 2) return [];
 
-  const dataLines = lines.slice(1); // skip header
+  const dataLines = lines.slice(1);
   const rows: PreviewRow[] = [];
 
   for (const line of dataLines) {

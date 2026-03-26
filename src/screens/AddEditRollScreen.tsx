@@ -1,5 +1,6 @@
 import React, { useLayoutEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -7,7 +8,7 @@ import {
   TextInput,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { createRoll } from '../db/database';
+import { createRoll } from '../db/supabase-operations';
 import { RootStackParamList } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AddEditRoll'>;
@@ -15,16 +16,19 @@ type Props = NativeStackScreenProps<RootStackParamList, 'AddEditRoll'>;
 export default function AddEditRollScreen({ route, navigation }: Props) {
   const { filamentId } = route.params;
   const [quantity, setQuantity] = useState('1');
+  const [saving, setSaving] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({ title: 'Add Rolls' });
   }, [navigation]);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const qty = Math.max(1, parseInt(quantity, 10) || 1);
+    setSaving(true);
     for (let i = 0; i < qty; i++) {
-      createRoll(filamentId);
+      await createRoll(filamentId);
     }
+    setSaving(false);
     navigation.goBack();
   };
 
@@ -44,10 +48,11 @@ export default function AddEditRollScreen({ route, navigation }: Props) {
         selectTextOnFocus
       />
 
-      <Pressable style={styles.saveBtn} onPress={handleAdd}>
-        <Text style={styles.saveBtnText}>
-          Add {qty} Roll{qty !== 1 ? 's' : ''} to Inventory
-        </Text>
+      <Pressable style={[styles.saveBtn, saving && styles.saveBtnDisabled]} onPress={handleAdd} disabled={saving}>
+        {saving
+          ? <ActivityIndicator color="#fff" />
+          : <Text style={styles.saveBtnText}>Add {qty} Roll{qty !== 1 ? 's' : ''} to Inventory</Text>
+        }
       </Pressable>
     </ScrollView>
   );
@@ -80,5 +85,6 @@ const styles = StyleSheet.create({
     marginTop: 28,
     elevation: 2,
   },
+  saveBtnDisabled: { backgroundColor: '#aaa' },
   saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
 });

@@ -12,13 +12,21 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { deleteFilament, getAllFilaments, getDistinctManufacturers, getDistinctTypes, getSetting, searchFilaments } from '../db/database';
+import {
+  deleteFilament,
+  getAllFilaments,
+  getDistinctManufacturers,
+  getDistinctTypes,
+  getSetting,
+} from '../db/supabase-operations';
 import { FilamentSummary, RootStackParamList } from '../types';
 import PickerModal from '../components/PickerModal';
+import { Ionicons } from '@expo/vector-icons';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'FilamentList'>;
 
 export default function FilamentListScreen({ navigation }: Props) {
+  const [allFilaments, setAllFilaments] = useState<FilamentSummary[]>([]);
   const [filaments, setFilaments] = useState<FilamentSummary[]>([]);
   const [query, setQuery] = useState('');
   const [filterManufacturer, setFilterManufacturer] = useState('');
@@ -34,9 +42,16 @@ export default function FilamentListScreen({ navigation }: Props) {
   const [thresholdHigh, setThresholdHigh] = useState(4);
 
   const applyFilters = useCallback((
-    all: FilamentSummary[], mfg: string, type: string, inUse: boolean, inInventory: boolean
+    all: FilamentSummary[], q: string, mfg: string, type: string, inUse: boolean, inInventory: boolean
   ) => {
     return all.filter((f) => {
+      if (q.trim()) {
+        const ql = q.toLowerCase();
+        if (!f.manufacturer.toLowerCase().includes(ql) &&
+            !f.type.toLowerCase().includes(ql) &&
+            !f.color.toLowerCase().includes(ql) &&
+            !f.upc.includes(ql)) return false;
+      }
       if (mfg && f.manufacturer !== mfg) return false;
       if (type && f.type !== type) return false;
       if (inUse && !(f.in_use > 0)) return false;
@@ -46,13 +61,26 @@ export default function FilamentListScreen({ navigation }: Props) {
   }, []);
 
   const load = useCallback(() => {
-    setThresholdLow(parseInt(getSetting('threshold_Low', '0'), 10));
-    setThresholdMedium(parseInt(getSetting('threshold_Medium', '1'), 10));
-    setThresholdHigh(parseInt(getSetting('threshold_High', '4'), 10));
-    const all = query.trim() ? searchFilaments(query) : getAllFilaments();
-    setFilaments(applyFilters(all, filterManufacturer, filterType, filterInUse, filterInInventory));
-    setManufacturers(getDistinctManufacturers());
-    setTypes(getDistinctTypes());
+    let cancelled = false;
+    (async () => {
+      const [data, mfgs, tps, tLow, tMed, tHigh] = await Promise.all([
+        getAllFilaments(),
+        getDistinctManufacturers(),
+        getDistinctTypes(),
+        getSetting('threshold_Low', '0'),
+        getSetting('threshold_Medium', '1'),
+        getSetting('threshold_High', '4'),
+      ]);
+      if (cancelled) return;
+      setAllFilaments(data);
+      setFilaments(applyFilters(data, query, filterManufacturer, filterType, filterInUse, filterInInventory));
+      setManufacturers(mfgs);
+      setTypes(tps);
+      setThresholdLow(parseInt(tLow, 10));
+      setThresholdMedium(parseInt(tMed, 10));
+      setThresholdHigh(parseInt(tHigh, 10));
+    })();
+    return () => { cancelled = true; };
   }, [query, filterManufacturer, filterType, filterInUse, filterInInventory, applyFilters]);
 
   useFocusEffect(load);
@@ -61,7 +89,7 @@ export default function FilamentListScreen({ navigation }: Props) {
     navigation.setOptions({
       headerRight: () => (
         <Pressable onPress={() => navigation.navigate('Settings')} style={{ marginRight: 4 }}>
-          <Text style={styles.settingsBtn}>Settings</Text>
+          <Ionicons name="settings-outline" size={24} color="#3367d6" />
         </Pressable>
       ),
     });
@@ -69,34 +97,29 @@ export default function FilamentListScreen({ navigation }: Props) {
 
   const handleSearch = (text: string) => {
     setQuery(text);
-    const all = text.trim() ? searchFilaments(text) : getAllFilaments();
-    setFilaments(applyFilters(all, filterManufacturer, filterType));
+    setFilaments(applyFilters(allFilaments, text, filterManufacturer, filterType, filterInUse, filterInInventory));
   };
 
   const handleSetMfg = (value: string) => {
     setFilterManufacturer(value);
-    const all = query.trim() ? searchFilaments(query) : getAllFilaments();
-    setFilaments(applyFilters(all, value, filterType, filterInUse, filterInInventory));
+    setFilaments(applyFilters(allFilaments, query, value, filterType, filterInUse, filterInInventory));
   };
 
   const handleSetType = (value: string) => {
     setFilterType(value);
-    const all = query.trim() ? searchFilaments(query) : getAllFilaments();
-    setFilaments(applyFilters(all, filterManufacturer, value, filterInUse, filterInInventory));
+    setFilaments(applyFilters(allFilaments, query, filterManufacturer, value, filterInUse, filterInInventory));
   };
 
   const handleToggleInUse = () => {
     const next = !filterInUse;
     setFilterInUse(next);
-    const all = query.trim() ? searchFilaments(query) : getAllFilaments();
-    setFilaments(applyFilters(all, filterManufacturer, filterType, next, filterInInventory));
+    setFilaments(applyFilters(allFilaments, query, filterManufacturer, filterType, next, filterInInventory));
   };
 
   const handleToggleInInventory = () => {
     const next = !filterInInventory;
     setFilterInInventory(next);
-    const all = query.trim() ? searchFilaments(query) : getAllFilaments();
-    setFilaments(applyFilters(all, filterManufacturer, filterType, filterInUse, next));
+    setFilaments(applyFilters(allFilaments, query, filterManufacturer, filterType, filterInUse, next));
   };
 
   const handleDelete = (item: FilamentSummary) => {
@@ -108,9 +131,11 @@ export default function FilamentListScreen({ navigation }: Props) {
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => {
-            deleteFilament(item.id);
-            load();
+          onPress: async () => {
+            await deleteFilament(item.id);
+            const updated = allFilaments.filter(f => f.id !== item.id);
+            setAllFilaments(updated);
+            setFilaments(applyFilters(updated, query, filterManufacturer, filterType, filterInUse, filterInInventory));
           },
         },
       ]
@@ -144,7 +169,6 @@ export default function FilamentListScreen({ navigation }: Props) {
         )}
       </View>
 
-      {/* Filter row */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -205,12 +229,11 @@ export default function FilamentListScreen({ navigation }: Props) {
 
         {hasFilters && (
           <Pressable style={styles.clearAllChip} onPress={() => {
-            handleSetMfg('');
-            handleSetType('');
+            setFilterManufacturer('');
+            setFilterType('');
             setFilterInUse(false);
             setFilterInInventory(false);
-            const all = query.trim() ? searchFilaments(query) : getAllFilaments();
-            setFilaments(applyFilters(all, '', '', false, false));
+            setFilaments(applyFilters(allFilaments, query, '', '', false, false));
           }}>
             <Text style={styles.clearAllText}>Clear All</Text>
           </Pressable>
@@ -250,7 +273,7 @@ export default function FilamentListScreen({ navigation }: Props) {
         <FlatList
           style={{ flex: 1 }}
           data={filaments}
-          keyExtractor={(item) => String(item.id)}
+          keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <Pressable
               style={[styles.row, isLowStock(item) && styles.rowLowStock]}
@@ -435,5 +458,4 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   fabText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  settingsBtn: { color: '#3367d6', fontSize: 15, fontWeight: '600' },
 });

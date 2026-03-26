@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
   Pressable,
@@ -14,7 +15,13 @@ import * as DocumentPicker from 'expo-document-picker';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { createFilament, getDistinctManufacturers, getDistinctTypes, getFilament, updateFilament } from '../db/database';
+import {
+  createFilament,
+  getDistinctManufacturers,
+  getDistinctTypes,
+  getFilament,
+  updateFilament,
+} from '../db/supabase-operations';
 import { FilamentPriority, RootStackParamList } from '../types';
 import PickerModal from '../components/PickerModal';
 
@@ -32,6 +39,7 @@ export default function AddEditFilamentScreen({ route, navigation }: Props) {
   const [url, setUrl] = useState('');
   const [priority, setPriority] = useState<FilamentPriority>('None');
   const [showScanner, setShowScanner] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const [manufacturers, setManufacturers] = useState<string[]>([]);
   const [types, setTypes] = useState<string[]>([]);
@@ -41,8 +49,12 @@ export default function AddEditFilamentScreen({ route, navigation }: Props) {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
   useFocusEffect(useCallback(() => {
-    setManufacturers(getDistinctManufacturers());
-    setTypes(getDistinctTypes());
+    let cancelled = false;
+    (async () => {
+      const [mfgs, tps] = await Promise.all([getDistinctManufacturers(), getDistinctTypes()]);
+      if (!cancelled) { setManufacturers(mfgs); setTypes(tps); }
+    })();
+    return () => { cancelled = true; };
   }, []));
 
   useLayoutEffect(() => {
@@ -51,16 +63,18 @@ export default function AddEditFilamentScreen({ route, navigation }: Props) {
 
   useEffect(() => {
     if (isEdit && filamentId !== undefined) {
-      const f = getFilament(filamentId);
-      if (f) {
-        setManufacturer(f.manufacturer);
-        setType(f.type);
-        setColor(f.color);
-        setUpc(f.upc);
-        setPhotoUri(f.photo_uri);
-        setUrl(f.url ?? '');
-        setPriority((f.priority as FilamentPriority) ?? 'Medium');
-      }
+      (async () => {
+        const f = await getFilament(filamentId);
+        if (f) {
+          setManufacturer(f.manufacturer);
+          setType(f.type);
+          setColor(f.color);
+          setUpc(f.upc);
+          setPhotoUri(f.photo_uri);
+          setUrl(f.url ?? '');
+          setPriority((f.priority as FilamentPriority) ?? 'None');
+        }
+      })();
     }
   }, [filamentId, isEdit]);
 
@@ -125,24 +139,24 @@ export default function AddEditFilamentScreen({ route, navigation }: Props) {
     ]);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!manufacturer.trim() || !type.trim() || !color.trim()) {
       Alert.alert('Missing fields', 'Manufacturer, Type, and Color are required.');
       return;
     }
-
+    setSaving(true);
     if (isEdit && filamentId !== undefined) {
-      updateFilament(filamentId, manufacturer.trim(), type.trim(), color.trim(), upc.trim(), photoUri, url.trim() || null, priority);
+      await updateFilament(filamentId, manufacturer.trim(), type.trim(), color.trim(), upc.trim(), photoUri, url.trim() || null, priority);
     } else {
-      createFilament(manufacturer.trim(), type.trim(), color.trim(), upc.trim(), photoUri, url.trim() || null, priority);
+      await createFilament(manufacturer.trim(), type.trim(), color.trim(), upc.trim(), photoUri, url.trim() || null, priority);
     }
+    setSaving(false);
     navigation.goBack();
   };
 
   return (
     <>
       <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
-        {/* Photo */}
         <Pressable style={styles.photoPicker} onPress={handlePickPhoto}>
           {photoUri ? (
             <Image source={{ uri: photoUri }} style={styles.photoPreview} resizeMode="cover" />
@@ -243,11 +257,14 @@ export default function AddEditFilamentScreen({ route, navigation }: Props) {
         />
 
         <Pressable
-          style={[styles.saveBtn, (!manufacturer.trim() || !type.trim() || !color.trim()) && styles.saveBtnDisabled]}
+          style={[styles.saveBtn, (saving || !manufacturer.trim() || !type.trim() || !color.trim()) && styles.saveBtnDisabled]}
           onPress={handleSave}
-          disabled={!manufacturer.trim() || !type.trim() || !color.trim()}
+          disabled={saving || !manufacturer.trim() || !type.trim() || !color.trim()}
         >
-          <Text style={styles.saveBtnText}>{isEdit ? 'Save Changes' : 'Add Filament'}</Text>
+          {saving
+            ? <ActivityIndicator color="#fff" />
+            : <Text style={styles.saveBtnText}>{isEdit ? 'Save Changes' : 'Add Filament'}</Text>
+          }
         </Pressable>
       </ScrollView>
 

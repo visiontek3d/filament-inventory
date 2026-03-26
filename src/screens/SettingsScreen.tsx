@@ -4,7 +4,13 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { RootStackParamList } from '../types';
-import { clearAllData, getFilamentByUpc, getSetting, setSetting, updateFilamentPhoto } from '../db/database';
+import {
+  clearAllData,
+  getFilamentByUpc,
+  getSetting,
+  setSetting,
+  setLocalPhotoUri,
+} from '../db/supabase-operations';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
@@ -15,14 +21,21 @@ export default function SettingsScreen({ navigation }: Props) {
   const [thresholdHigh, setThresholdHigh] = useState('');
 
   useEffect(() => {
-    setThresholdLow(getSetting('threshold_Low', '0'));
-    setThresholdMedium(getSetting('threshold_Medium', '1'));
-    setThresholdHigh(getSetting('threshold_High', '4'));
+    (async () => {
+      const [low, med, high] = await Promise.all([
+        getSetting('threshold_Low', '0'),
+        getSetting('threshold_Medium', '1'),
+        getSetting('threshold_High', '4'),
+      ]);
+      setThresholdLow(low);
+      setThresholdMedium(med);
+      setThresholdHigh(high);
+    })();
   }, []);
 
-  const saveThreshold = (key: string, value: string) => {
+  const saveThreshold = async (key: string, value: string) => {
     const n = parseInt(value, 10);
-    if (!isNaN(n) && n >= 0) setSetting(key, String(n));
+    if (!isNaN(n) && n >= 0) await setSetting(key, String(n));
   };
 
   const handleClearAll = () => {
@@ -34,8 +47,8 @@ export default function SettingsScreen({ navigation }: Props) {
         {
           text: 'Delete Everything',
           style: 'destructive',
-          onPress: () => {
-            clearAllData();
+          onPress: async () => {
+            await clearAllData();
             Alert.alert('Done', 'All data has been cleared.');
           },
         },
@@ -59,20 +72,18 @@ export default function SettingsScreen({ navigation }: Props) {
 
     for (const asset of result.assets) {
       try {
-        // Strip extension to get the UPC
         const upc = asset.name.replace(/\.[^.]+$/, '').trim();
-        const filament = getFilamentByUpc(upc);
+        const filament = await getFilamentByUpc(upc);
 
         if (!filament) {
           unmatched.push(asset.name);
           continue;
         }
 
-        // Copy image into app's permanent storage
         const ext = asset.name.split('.').pop() ?? 'jpg';
         const dest = `${FileSystem.documentDirectory}filament_${filament.id}.${ext}`;
         await FileSystem.copyAsync({ from: asset.uri, to: dest });
-        updateFilamentPhoto(filament.id, dest);
+        setLocalPhotoUri(filament.id, dest);
         matched++;
       } catch (e: any) {
         errors.push(`${asset.name}: ${e.message}`);

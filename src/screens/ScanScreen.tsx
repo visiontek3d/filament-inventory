@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { createRoll, getFilamentByUpc, getRolls, setRollInUse } from '../db/database';
+import { createRoll, getFilamentByUpc, getRolls, setRollInUse } from '../db/supabase-operations';
 import { FilamentSummary, Roll, RootStackParamList } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Scan'>;
@@ -40,37 +40,39 @@ export default function ScanScreen({ navigation }: Props) {
     scannedRef.current = true;
 
     const upc = data.trim();
-    const found = getFilamentByUpc(upc);
+    (async () => {
+      const found = await getFilamentByUpc(upc);
 
-    if (!found) {
-      Alert.alert(
-        'Filament Not Found',
-        `No filament with UPC "${upc}" in your inventory.`,
-        [
-          { text: 'Scan Again', onPress: resetScan },
-          {
-            text: 'Create New',
-            onPress: () => navigation.replace('AddEditFilament', { initialUpc: upc }),
-          },
-          { text: 'Cancel', onPress: () => navigation.goBack() },
-        ]
-      );
-      return;
-    }
+      if (!found) {
+        Alert.alert(
+          'Filament Not Found',
+          `No filament with UPC "${upc}" in your inventory.`,
+          [
+            { text: 'Scan Again', onPress: resetScan },
+            {
+              text: 'Create New',
+              onPress: () => navigation.replace('AddEditFilament', { initialUpc: upc }),
+            },
+            { text: 'Cancel', onPress: () => navigation.goBack() },
+          ]
+        );
+        return;
+      }
 
-    const rolls = getRolls(found.id);
-    setFilament(found);
-    setExistingRolls(rolls);
-    setStage('confirm');
+      const rolls = await getRolls(found.id);
+      setFilament(found);
+      setExistingRolls(rolls);
+      setStage('confirm');
+    })();
   };
 
-  const inventoryRolls = existingRolls.filter((r) => !r.is_in_use);
+  const inventoryRolls = existingRolls.filter((r) => !r.is_in_use && !r.archived);
 
-  const handleAddRoll = () => {
+  const handleAddRoll = async () => {
     if (!filament) return;
     const qty = Math.max(1, parseInt(quantity, 10) || 1);
     for (let i = 0; i < qty; i++) {
-      createRoll(filament.id);
+      await createRoll(filament.id);
     }
     Alert.alert(
       'Added to Inventory',
@@ -83,7 +85,7 @@ export default function ScanScreen({ navigation }: Props) {
     );
   };
 
-  const handleMoveToInUse = () => {
+  const handleMoveToInUse = async () => {
     if (!filament) return;
     const qty = Math.max(1, parseInt(quantity, 10) || 1);
     if (qty > inventoryRolls.length) {
@@ -94,7 +96,7 @@ export default function ScanScreen({ navigation }: Props) {
       return;
     }
     for (let i = 0; i < qty; i++) {
-      setRollInUse(inventoryRolls[i].id);
+      await setRollInUse(inventoryRolls[i].id);
     }
     Alert.alert(
       'Moved to In Use',
@@ -145,7 +147,6 @@ export default function ScanScreen({ navigation }: Props) {
     );
   }
 
-  // Confirm stage
   return (
     <ScrollView style={styles.confirmContainer} contentContainerStyle={{ paddingBottom: 40 }}>
       <Text style={styles.confirmTitle}>{filament?.manufacturer} {filament?.type}</Text>
@@ -159,7 +160,7 @@ export default function ScanScreen({ navigation }: Props) {
         </View>
         <View style={[styles.stockBadge, styles.stockBadgeInUse]}>
           <Text style={[styles.stockBadgeValue, styles.stockBadgeValueInUse]}>
-            {existingRolls.length - inventoryRolls.length}
+            {existingRolls.filter(r => r.is_in_use && !r.archived).length}
           </Text>
           <Text style={styles.stockBadgeLabel}>In Use</Text>
         </View>
@@ -242,7 +243,6 @@ const styles = StyleSheet.create({
     borderRadius: 24, borderWidth: 1, borderColor: '#fff',
   },
   cancelBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-
   confirmContainer: { flex: 1, backgroundColor: '#f5f5f5', padding: 20, paddingTop: 56 },
   confirmTitle: { fontSize: 24, fontWeight: '800', color: '#1a1a1a', marginBottom: 2 },
   confirmColor: { fontSize: 15, color: '#555' },
@@ -256,7 +256,6 @@ const styles = StyleSheet.create({
   stockBadgeValue: { fontSize: 28, fontWeight: '800', color: '#1a8a3a' },
   stockBadgeValueInUse: { color: '#c65800' },
   stockBadgeLabel: { fontSize: 12, color: '#888', marginTop: 2 },
-
   fieldLabel: {
     fontSize: 12, color: '#888', textTransform: 'uppercase',
     letterSpacing: 0.5, marginBottom: 8, marginTop: 16,
@@ -270,7 +269,6 @@ const styles = StyleSheet.create({
   pillOut: { backgroundColor: '#c62828', borderColor: '#c62828' },
   pillText: { color: '#333', fontWeight: '600', fontSize: 14 },
   pillTextActive: { color: '#fff' },
-
   qtyHint: { fontSize: 12, color: '#c65800', marginTop: 4, fontWeight: '600' },
   input: {
     backgroundColor: '#fff', borderRadius: 8, borderWidth: 1,
@@ -282,7 +280,6 @@ const styles = StyleSheet.create({
   },
   confirmBtnOut: { backgroundColor: '#c65800' },
   confirmBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-
   noRollsCard: {
     backgroundColor: '#fde8e8', borderRadius: 8, padding: 16, alignItems: 'center',
   },

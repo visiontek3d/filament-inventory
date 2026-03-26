@@ -1,22 +1,22 @@
 export type FilamentPriority = 'None' | 'Low' | 'Medium' | 'High';
 
 export interface Filament {
-  id: number;
+  id: string;  // Supabase UUID
   manufacturer: string;
   type: string;
   color: string;
   upc: string;
-  photo_uri: string | null;
+  photo_uri: string | null;  // local device path
   url: string | null;
   priority: FilamentPriority;
   created_at: string;
 }
 
 export interface Roll {
-  id: number;
-  filament_id: number;
-  is_in_use: number;  // 0 = Inventory, 1 = In Use
-  archived: number;   // 1 = empty spool, excluded from counts
+  id: string;  // Supabase UUID
+  filament_id: string;
+  is_in_use: boolean;
+  archived: boolean;
   created_at: string;
 }
 
@@ -28,9 +28,9 @@ export interface FilamentSummary extends Filament {
 
 export type RootStackParamList = {
   FilamentList: undefined;
-  FilamentDetail: { filamentId: number };
-  AddEditFilament: { filamentId?: number; initialUpc?: string };
-  AddEditRoll: { filamentId: number };
+  FilamentDetail: { filamentId: string };
+  AddEditFilament: { filamentId?: string; initialUpc?: string };
+  AddEditRoll: { filamentId: string };
   Scan: undefined;
   BulkImport: undefined;
   Settings: undefined;
