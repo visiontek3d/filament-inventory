@@ -4,13 +4,17 @@ import {
   StyleSheet, Text, TextInput, View, ActivityIndicator,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import * as WebBrowser from 'expo-web-browser';
-import * as AuthSession from 'expo-auth-session';
+import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
+import Constants from 'expo-constants';
 import { supabase } from '../lib/supabase';
 
-WebBrowser.maybeCompleteAuthSession();
+const WEB_CLIENT_ID = '173807542780-tjujh515tenagrk4fkkkusktba9n19cg.apps.googleusercontent.com';
 
-const redirectUri = AuthSession.makeRedirectUri({ scheme: 'filamentinventory' });
+const isStandalone = Constants.executionEnvironment !== 'storeClient';
+
+if (isStandalone) {
+  GoogleSignin.configure({ webClientId: WEB_CLIENT_ID });
+}
 
 export default function AuthScreen() {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
@@ -44,33 +48,22 @@ export default function AuthScreen() {
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true);
     try {
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo: redirectUri, skipBrowserRedirect: true },
-      });
+      await GoogleSignin.hasPlayServices();
+      const userInfo = await GoogleSignin.signIn();
+      const idToken = userInfo.data?.idToken;
+      if (!idToken) throw new Error('No ID token returned from Google.');
+      const { error } = await supabase.auth.signInWithIdToken({ provider: 'google', token: idToken });
       if (error) throw error;
-      if (!data.url) throw new Error('No OAuth URL returned');
-
-      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUri);
-      if (result.type === 'success') {
-        const url = result.url;
-        // Try PKCE code exchange (Supabase default flow)
-        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(url);
-        if (exchangeError) {
-          // Fallback: implicit flow with tokens in fragment
-          const fragment = url.includes('#') ? url.split('#')[1] : url.split('?')[1] ?? '';
-          const params = new URLSearchParams(fragment);
-          const access_token = params.get('access_token');
-          const refresh_token = params.get('refresh_token');
-          if (access_token && refresh_token) {
-            await supabase.auth.setSession({ access_token, refresh_token });
-          } else {
-            throw exchangeError;
-          }
-        }
-      }
     } catch (err: any) {
-      Alert.alert('Error', err.message ?? 'Google sign-in failed.');
+      if (err.code === statusCodes.SIGN_IN_CANCELLED) {
+        // user cancelled, do nothing
+      } else if (err.code === statusCodes.IN_PROGRESS) {
+        // already signing in
+      } else if (err.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+        Alert.alert('Error', 'Google Play Services not available.');
+      } else {
+        Alert.alert('Google Sign-In Error', err.message ?? 'Unknown error');
+      }
     } finally {
       setGoogleLoading(false);
     }
@@ -122,30 +115,34 @@ export default function AuthScreen() {
           }
         </Pressable>
 
-        <View style={styles.dividerRow}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>or</Text>
-          <View style={styles.dividerLine} />
-        </View>
+        {isStandalone && (
+          <>
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or</Text>
+              <View style={styles.dividerLine} />
+            </View>
 
-        <Pressable
-          style={[styles.googleBtn, googleLoading && styles.btnDisabled]}
-          onPress={handleGoogleSignIn}
-          disabled={googleLoading}
-        >
-          {googleLoading
-            ? <ActivityIndicator color="#333" />
-            : <>
-                <Svg width={18} height={18} viewBox="0 0 18 18">
-                  <Path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
-                  <Path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
-                  <Path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/>
-                  <Path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
-                </Svg>
-                <Text style={styles.googleBtnText}>Continue with Google</Text>
-              </>
-          }
-        </Pressable>
+            <Pressable
+              style={[styles.googleBtn, googleLoading && styles.btnDisabled]}
+              onPress={handleGoogleSignIn}
+              disabled={googleLoading}
+            >
+              {googleLoading
+                ? <ActivityIndicator color="#333" />
+                : <>
+                    <Svg width={18} height={18} viewBox="0 0 18 18">
+                      <Path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
+                      <Path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
+                      <Path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/>
+                      <Path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
+                    </Svg>
+                    <Text style={styles.googleBtnText}>Continue with Google</Text>
+                  </>
+              }
+            </Pressable>
+          </>
+        )}
 
         <Pressable onPress={() => setMode(m => m === 'signin' ? 'signup' : 'signin')} style={styles.switchBtn}>
           <Text style={styles.switchText}>

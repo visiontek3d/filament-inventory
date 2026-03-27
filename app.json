@@ -31,7 +31,8 @@
           "cameraPermission": "Allow Filament Inventory to access your camera to scan barcodes."
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      "@react-native-google-signin/google-signin"
     ],
     "extra": {
       "eas": {
