@@ -303,23 +303,18 @@ export async function deleteRoll(id: string): Promise<void> {
 // ── Settings ───────────────────────────────────────────────────────────────────
 
 export async function getSetting(key: string, defaultValue: string): Promise<string> {
-  const userId = await getCurrentUserId();
-  if (!userId) return defaultValue;
   const { data } = await supabase
     .from('filament_settings')
     .select('value')
-    .eq('user_id', userId)
     .eq('key', key)
     .maybeSingle();
   return data?.value ?? defaultValue;
 }
 
 export async function setSetting(key: string, value: string): Promise<void> {
-  const userId = await getCurrentUserId();
-  if (!userId) return;
   await supabase
     .from('filament_settings')
-    .upsert({ user_id: userId, key, value }, { onConflict: 'user_id,key' });
+    .upsert({ key, value }, { onConflict: 'key' });
 }
 
 export async function clearAllData(): Promise<void> {

@@ -127,7 +127,7 @@ export async function migrateToSupabase(
   for (const s of settings) {
     await supabase
       .from('filament_settings')
-      .upsert({ user_id: userId, key: s.key, value: s.value }, { onConflict: 'user_id,key' });
+      .upsert({ key: s.key, value: s.value }, { onConflict: 'key' });
   }
 
   setSetting('supabase_migrated', '1');
