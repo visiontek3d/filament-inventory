@@ -3,13 +3,20 @@ import {
   Alert, KeyboardAvoidingView, Platform, Pressable,
   StyleSheet, Text, TextInput, View, ActivityIndicator,
 } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
+import * as AuthSession from 'expo-auth-session';
 import { supabase } from '../lib/supabase';
+
+WebBrowser.maybeCompleteAuthSession();
+
+const redirectUri = AuthSession.makeRedirectUri({ scheme: 'filamentinventory' });
 
 export default function AuthScreen() {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const handleSubmit = async () => {
     if (!email.trim() || !password.trim()) {
@@ -30,6 +37,34 @@ export default function AuthScreen() {
       Alert.alert('Error', err.message ?? 'An error occurred.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setGoogleLoading(true);
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: redirectUri, skipBrowserRedirect: true },
+      });
+      if (error) throw error;
+      if (!data.url) throw new Error('No OAuth URL returned');
+
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUri);
+      if (result.type === 'success') {
+        const url = result.url;
+        const fragment = url.includes('#') ? url.split('#')[1] : url.split('?')[1] ?? '';
+        const params = new URLSearchParams(fragment);
+        const access_token = params.get('access_token');
+        const refresh_token = params.get('refresh_token');
+        if (access_token && refresh_token) {
+          await supabase.auth.setSession({ access_token, refresh_token });
+        }
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err.message ?? 'Google sign-in failed.');
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -79,6 +114,26 @@ export default function AuthScreen() {
           }
         </Pressable>
 
+        <View style={styles.dividerRow}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>or</Text>
+          <View style={styles.dividerLine} />
+        </View>
+
+        <Pressable
+          style={[styles.googleBtn, googleLoading && styles.btnDisabled]}
+          onPress={handleGoogleSignIn}
+          disabled={googleLoading}
+        >
+          {googleLoading
+            ? <ActivityIndicator color="#333" />
+            : <>
+                <Text style={styles.googleIcon}>G</Text>
+                <Text style={styles.googleBtnText}>Continue with Google</Text>
+              </>
+          }
+        </Pressable>
+
         <Pressable onPress={() => setMode(m => m === 'signin' ? 'signup' : 'signin')} style={styles.switchBtn}>
           <Text style={styles.switchText}>
             {mode === 'signin' ? "Don't have an account? Create one" : 'Already have an account? Sign in'}
@@ -105,6 +160,16 @@ const styles = StyleSheet.create({
   },
   btnDisabled: { backgroundColor: '#aaa' },
   btnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 20, gap: 10 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#eee' },
+  dividerText: { color: '#aaa', fontSize: 13 },
+  googleBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#fff', borderRadius: 10, padding: 13,
+    borderWidth: 1.5, borderColor: '#ddd', gap: 10, elevation: 1,
+  },
+  googleIcon: { fontSize: 18, fontWeight: '700', color: '#4285F4' },
+  googleBtnText: { color: '#333', fontWeight: '600', fontSize: 15 },
   switchBtn: { marginTop: 16, alignItems: 'center' },
   switchText: { color: '#3367d6', fontSize: 14, fontWeight: '500' },
 });

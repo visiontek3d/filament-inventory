@@ -3,6 +3,7 @@
     "name": "Filament Inventory",
     "slug": "filament-inventory",
     "version": "1.0.0",
+    "scheme": "filamentinventory",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -14,7 +15,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/android-icon-foreground.png",
-"backgroundColor": "#ffffff"
+        "backgroundColor": "#ffffff"
       },
       "package": "com.kevin.filamentinventory",
       "permissions": [
@@ -29,7 +30,8 @@
         {
           "cameraPermission": "Allow Filament Inventory to access your camera to scan barcodes."
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "extra": {
       "eas": {
