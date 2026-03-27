@@ -53,12 +53,19 @@ export default function AuthScreen() {
       const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUri);
       if (result.type === 'success') {
         const url = result.url;
-        const fragment = url.includes('#') ? url.split('#')[1] : url.split('?')[1] ?? '';
-        const params = new URLSearchParams(fragment);
-        const access_token = params.get('access_token');
-        const refresh_token = params.get('refresh_token');
-        if (access_token && refresh_token) {
-          await supabase.auth.setSession({ access_token, refresh_token });
+        // Try PKCE code exchange (Supabase default flow)
+        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(url);
+        if (exchangeError) {
+          // Fallback: implicit flow with tokens in fragment
+          const fragment = url.includes('#') ? url.split('#')[1] : url.split('?')[1] ?? '';
+          const params = new URLSearchParams(fragment);
+          const access_token = params.get('access_token');
+          const refresh_token = params.get('refresh_token');
+          if (access_token && refresh_token) {
+            await supabase.auth.setSession({ access_token, refresh_token });
+          } else {
+            throw exchangeError;
+          }
         }
       }
     } catch (err: any) {
