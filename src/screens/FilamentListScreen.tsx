@@ -28,6 +28,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'FilamentList'>;
 export default function FilamentListScreen({ navigation }: Props) {
   const [allFilaments, setAllFilaments] = useState<FilamentSummary[]>([]);
   const [filaments, setFilaments] = useState<FilamentSummary[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const [filterManufacturer, setFilterManufacturer] = useState('');
   const [filterType, setFilterType] = useState('');
@@ -60,28 +61,29 @@ export default function FilamentListScreen({ navigation }: Props) {
     });
   }, []);
 
+  const fetchData = useCallback(async () => {
+    const [data, mfgs, tps, tLow, tMed, tHigh] = await Promise.all([
+      getAllFilaments(),
+      getDistinctManufacturers(),
+      getDistinctTypes(),
+      getSetting('threshold_Low', '0'),
+      getSetting('threshold_Medium', '1'),
+      getSetting('threshold_High', '4'),
+    ]);
+    setAllFilaments(data);
+    setFilaments(applyFilters(data, query, filterManufacturer, filterType, filterInUse, filterInInventory));
+    setManufacturers(mfgs);
+    setTypes(tps);
+    setThresholdLow(parseInt(tLow, 10));
+    setThresholdMedium(parseInt(tMed, 10));
+    setThresholdHigh(parseInt(tHigh, 10));
+  }, [query, filterManufacturer, filterType, filterInUse, filterInInventory, applyFilters]);
+
   const load = useCallback(() => {
     let cancelled = false;
-    (async () => {
-      const [data, mfgs, tps, tLow, tMed, tHigh] = await Promise.all([
-        getAllFilaments(),
-        getDistinctManufacturers(),
-        getDistinctTypes(),
-        getSetting('threshold_Low', '0'),
-        getSetting('threshold_Medium', '1'),
-        getSetting('threshold_High', '4'),
-      ]);
-      if (cancelled) return;
-      setAllFilaments(data);
-      setFilaments(applyFilters(data, query, filterManufacturer, filterType, filterInUse, filterInInventory));
-      setManufacturers(mfgs);
-      setTypes(tps);
-      setThresholdLow(parseInt(tLow, 10));
-      setThresholdMedium(parseInt(tMed, 10));
-      setThresholdHigh(parseInt(tHigh, 10));
-    })();
+    fetchData().catch(() => {});
     return () => { cancelled = true; };
-  }, [query, filterManufacturer, filterType, filterInUse, filterInInventory, applyFilters]);
+  }, [fetchData]);
 
   useFocusEffect(load);
 
@@ -274,6 +276,12 @@ export default function FilamentListScreen({ navigation }: Props) {
           style={{ flex: 1 }}
           data={filaments}
           keyExtractor={(item) => item.id}
+          refreshing={refreshing}
+          onRefresh={async () => {
+            setRefreshing(true);
+            await fetchData().catch(() => {});
+            setRefreshing(false);
+          }}
           renderItem={({ item }) => (
             <Pressable
               style={[styles.row, isLowStock(item) && styles.rowLowStock]}
